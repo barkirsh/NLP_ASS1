@@ -4,6 +4,12 @@ from tqdm import tqdm
 import gzip
 import time
 
+DEBUG = False  # Set to False to disable debug prints
+
+def debug_print(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
+
 def train_bpe(filename, num_merges):
     # Read and preprocess the file
     with open(filename, 'rt', encoding='utf-8') as file:
@@ -17,12 +23,12 @@ def train_bpe(filename, num_merges):
     ]
     print("token list:", tokens_list)
     token_frequencies = collections.Counter(tokens_list)
-#    print("token_freq :", token_frequencies)
+    debug_print("token_freq :", token_frequencies)
 
     # Initialize vocabulary as unique characters
     vocab = set(char for token in tokens_list for char in token.split())
-#    print("initial vocab:", vocab)
-#    print("init vocab size: ", len(vocab))
+    debug_print("initial vocab:", vocab)
+    debug_print("init vocab size: ", len(vocab))
 
     pair_to_indexes = collections.defaultdict(set)
 
@@ -44,7 +50,7 @@ def train_bpe(filename, num_merges):
                 pair_count = count_freq_in_token(token, pair)
                 pairs_freq[pair] += pair_count  # Accumulate the frequency
 
-       #print("Pair frequencies:", dict(pairs_freq))
+        debug_print("Pair frequencies:", dict(pairs_freq))
         return pairs_freq
 
     def update_pair_to_indexes(tokens, changed_tokens=None):
@@ -90,12 +96,12 @@ def train_bpe(filename, num_merges):
             break
         best = max(pairs, key=pairs.get)
         vocab.add(''.join(best))
-        #print(f"Step {i + 1}: Merged pair {best} freq {pairs[best]} ")
-        #print("vocab: ", vocab)
+        debug_print(f"Step {i + 1}: Merged pair {best} freq {pairs[best]} ")
+        debug_print("vocab: ", vocab)
 
         tokens_list, changed_tokens = merge_vocab(best, tokens_list)
         update_pair_to_indexes(tokens_list, changed_tokens)
-        #print("token list :", tokens_list, "\n----------------------------------------------\n")
+        debug_print("token list :", tokens_list, "\n----------------------------------------------\n")
 
 
         pairs = get_stats(pair_to_indexes)
