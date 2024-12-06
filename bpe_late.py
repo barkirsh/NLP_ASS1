@@ -122,7 +122,7 @@ def train_bpe(filename, num_merges):
         tokens_list, changed_indexes = merge_vocab(best, tokens_list)
         new_pairs = update_pair_to_indexes(tokens_list, changed_indexes)
 
-        print("new pairs: ", new_pairs)
+    #    print("new pairs: ", new_pairs)
 
         debug_print("token list :", tokens_list, "\n----------------------------------------------\n")
 
