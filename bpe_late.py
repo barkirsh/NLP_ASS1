@@ -15,7 +15,7 @@ def train_bpe(filename, num_merges):
         for line in tqdm(lines, desc="Reading and tokenizing lines")
         for word in line.split()
     ]
-#    print("token list:", tokens_list)
+    print("token list:", tokens_list)
     token_frequencies = collections.Counter(tokens_list)
 #    print("token_freq :", token_frequencies)
 
