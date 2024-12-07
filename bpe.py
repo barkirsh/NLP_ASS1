@@ -32,8 +32,7 @@ def train_bpe(filename, num_merges):
     debug_print("initial vocab:", vocab)
     print("init vocab size: ", len(vocab))
 
-    pair_to_indexes = collections.defaultdict(lambda: (set(), int))
-    pairs_freq = collections.defaultdict(int)
+    pair_to_indexes = collections.defaultdict(lambda: (set(), 0))
 
     # Count pair frequency
     def count_freq_in_token(token, pair):
@@ -43,41 +42,51 @@ def train_bpe(filename, num_merges):
                 freq_in_token += 1
         return freq_in_token
 
-    # Calculate frequencies for all pairs
-    def pair_freq_update_calc(pair_to_indexes, new_pairs):
-        #    print("Calculating pair frequencies...")
-        # pairs_freq = collections.defaultdict(int)
-        for pair in new_pairs:  # tqdm(pair_to_indexes.items(), desc="Calculating pair frequencies"):
-            indexes, frequency = pair_to_indexes[pair]
-            for idx in indexes:
-                token = tokens_list[idx].split()  # Split the token into symbols
-                pair_count = count_freq_in_token(token, pair)
-                pairs_freq[pair] += pair_count  # Accumulate the frequency
-
-        debug_print("Pair frequencies:", dict(pairs_freq))
-        return pairs_freq
-
     # changes indexes is a list of all indexes of tokens that has changed.
     def update_pair_to_indexes(tokens, changed_indexes=None):
-        #    print("updating pair_to_indexes...")
         if changed_indexes is None:
-            changed_indexes = range(len(tokens))
-        list_of_new_pairs = []
+            changed_indexes = range(len(tokens))  # Process all tokens initially
+
+        # To track pairs added during this pass
+        new_pairs = set()
+
         # Update pair-to-index mappings for the specified indices
         for idx in changed_indexes:
             word = tokens[idx]
-            symbols = word.split()  # Split token into characters or sub-tokens
+            symbols = word.split()
+
+            # First, remove the old pairs that existed before the update
             for i in range(len(symbols) - 1):
-                pair = (symbols[i], symbols[i + 1])
-                if pair not in pair_to_indexes:
-                    pair_to_indexes[pair] = (set(),int)
-                    list_of_new_pairs.append(pair)
-                indexes, frequency = pair_to_indexes[pair]
-                indexes.add(idx)  # Correctly add the index to the set
-                pair_to_indexes[pair] = (indexes, frequency)
-        debug_print("changed indexes:", changed_indexes)
-        debug_print("pair_to_indexes:", dict(pair_to_indexes))
-        return list_of_new_pairs
+                old_pair = (symbols[i], symbols[i + 1])
+                if old_pair in pair_to_indexes:
+                    indexes, freq = pair_to_indexes[old_pair]
+                    indexes.discard(idx)  # Remove index of the updated token
+                    # If the pair is no longer used, clean up
+                    if not indexes:
+                        del pair_to_indexes[old_pair]
+                    else:
+                        pair_to_indexes[old_pair] = (indexes, freq - 1)
+
+            # Then, add the new pairs for the updated token
+            for i in range(len(symbols) - 1):
+                new_pair = (symbols[i], symbols[i + 1])
+                new_pairs.add(new_pair)  # Track new pairs
+                if new_pair not in pair_to_indexes:
+                    pair_to_indexes[new_pair] = (set(), 0)
+                indexes, freq = pair_to_indexes[new_pair]
+                indexes.add(idx)  # Add the index of the updated token
+                pair_to_indexes[new_pair] = (indexes, freq + 1)
+
+        # After updating, calculate and accumulate frequencies for new pairs
+        for pair in new_pairs:
+            indexes, _ = pair_to_indexes[pair]
+            freq = 0
+            for idx in indexes:
+                token = tokens[idx].split()  # Split the token into symbols
+                freq += count_freq_in_token(token, pair)  # Count occurrences of the pair
+            pair_to_indexes[pair] = (indexes, freq)
+
+        debug_print("Updated Pair-to-Indexes:", {k: (list(v[0]), v[1]) for k, v in pair_to_indexes.items()})
 
     def merge_vocab(pair, tokens_list):
         bigram = re.escape(' '.join(pair))
@@ -97,40 +106,57 @@ def train_bpe(filename, num_merges):
                 if (symbols[i], symbols[i + 1]) == pair:
                     if i > 0:  # Update left neighbor pair
                         left_pair = (symbols[i - 1], symbols[i])
-                        pairs_freq[left_pair] = 0
+                        indexes,frequency = pair_to_indexes[left_pair]
+                        frequency = 0
+                        pair_to_indexes[left_pair]=(indexes, frequency)
                     if i + 2 < len(symbols):  # Update right neighbor pair
                         right_pair = (symbols[i+1], symbols[i + 2])
-                        pairs_freq[right_pair] = 0
+                        indexes, frequency = pair_to_indexes[right_pair]
+                        frequency = 0
+                        pair_to_indexes[right_pair] = (indexes, frequency)
 
             tokens_list[i_word] = merged_word
-            pairs_freq[pair] = 0  # Mark this pair as merged
+            indexes, frequency = pair_to_indexes[pair]
+            frequency = 0
+            pair_to_indexes[pair] = (indexes, frequency)
             if merged_word != word:
                 changed_indexes.append(i_word)
 
         return tokens_list, changed_indexes
 
-    new_pairs = update_pair_to_indexes(tokens_list)
-    debug_print("new pairs: ", new_pairs)
-    pairs_freq = pair_freq_update_calc(pair_to_indexes, new_pairs)
+    update_pair_to_indexes(tokens_list)
+ #   debug_print("new pairs: ", new_pairs)
+#    pairs_freq = pair_freq_update_calc(pair_to_indexes, new_pairs)
+
 
     # Perform BPE merges
-    for i in tqdm(range(num_merges), desc="Performing BPE merges"):
-        #        pairs = get_stats(pair_to_indexes)
-        if not pairs_freq:
-            break
-        best = max(pairs_freq, key=pairs_freq.get)
-        vocab.add(''.join(best))
-        debug_print(f"Step {i + 1}: Merged pair {best} freq {pairs_freq[best]} ")
-        debug_print("vocab: ", vocab)
-        pairs_freq[best] = 0
-        tokens_list, changed_indexes = merge_vocab(best, tokens_list)
-        new_pairs = update_pair_to_indexes(tokens_list, changed_indexes)
+    with tqdm(total=num_merges, desc="Performing BPE merges") as pbar:
+        for i in range(num_merges):
+            #        pairs = get_stats(pair_to_indexes)
+            if not pair_to_indexes:
+                break
+            best = max(pair_to_indexes.items(), key=lambda item: item[1][1])
+            best_pair = best[0]
+            best_indexes = best[1][0]
+            best_freq = best[1][1]
 
-    #    print("new pairs: ", new_pairs)
+            vocab.add(''.join(best_pair))
+            debug_print(f"Step {i + 1}: Merged pair {best_pair} freq {best_freq} ")
+            debug_print("vocab: ", vocab)
+            pair_to_indexes[best_pair] = (best_indexes, best_freq)
+            tokens_list, changed_indexes = merge_vocab(best_pair, tokens_list)
+            update_pair_to_indexes(tokens_list, changed_indexes)
 
-        debug_print("token list :", tokens_list, "\n----------------------------------------------\n")
+            debug_print("new pairs: ", pair_to_indexes)
 
-        pairs = pair_freq_update_calc(pair_to_indexes, new_pairs)
+            debug_print("token list :", tokens_list, "\n----------------------------------------------\n")
+
+            if (i + 1) % 100 == 0 or (i + 1) == num_merges:
+                pbar.update(100)
+            else:
+                pbar.update(1)
+
+    #    pairs = pair_freq_update_calc(pair_to_indexes, new_pairs)
 
     # sort vocab by a-b
     sorted_vocab = sorted(vocab)
@@ -141,22 +167,8 @@ def train_bpe(filename, num_merges):
 if __name__ == "__main__":
     filename = "english.txt.gz"
     N = 30000
-    # Start the timer
- #   start_time = time.time()
-
-    # Execute the function
     vocab = train_bpe(filename, N)
-
-    # End the timer
- #   end_time = time.time()
-
-    # Calculate elapsed time
- #   elapsed_time = end_time - start_time
-  #  debug_print(f"Elapsed time: {elapsed_time:.6f} seconds")
-    # vocab = train_bpe(filename, N)
-    print("Final Vocabulary Size:", len(vocab))
-    print("Sample Vocabulary:", list(vocab))
-    with open("vocab_english.txt", 'w', encoding='utf-8') as file:
+    with open("vocab_english_bpe.txt", 'w', encoding='utf-8') as file:
         # Write each vocabulary item on a new line
         for word in vocab:
             file.write(word + '\n')

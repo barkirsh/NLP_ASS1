@@ -143,7 +143,7 @@ def train_bpe(filename, num_merges):
 
 
 if __name__ == "__main__":
-    filename = "hebrew.txt.gz"
+    filename = "english.txt.gz"
     N = 30000
     # Start the timer
  #   start_time = time.time()
