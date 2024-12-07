@@ -1,9 +1,15 @@
-
-
 import collections
 import re
 import gzip
+import time
 from tqdm import tqdm
+
+DEBUG = False  # Set to False to disable debug prints
+
+
+def debug_print(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
 
 
 def train_bpe(filename, num_merges):
@@ -11,173 +17,152 @@ def train_bpe(filename, num_merges):
     with gzip.open(filename, 'rt', encoding='utf-8') as file:
         lines = file.read().splitlines()
 
-    # Pre-tokenization: split into characters and add end-of-word marker
-    vocab = collections.Counter(
-        ' '.join(list(word) +['§']) for line in tqdm(lines, desc="Reading and tokenizing lines")
+    # Tokenize: characters separated by spaces, with '§' as end-of-word marker
+    tokens_list = [
+        ' '.join(list(word) + ['§'])
+        for line in tqdm(lines, desc="Reading and tokenizing lines")
         for word in line.split()
-    )
+    ]
+    debug_print("token list:", tokens_list)
+    token_frequencies = collections.Counter(tokens_list)
+    debug_print("token_freq :", token_frequencies)
 
-    pair_to_words = collections.defaultdict(set)
+    # Initialize vocabulary as unique characters
+    vocab = set(char for token in tokens_list for char in token.split())
+    debug_print("initial vocab:", vocab)
+    print("init vocab size: ", len(vocab))
 
-    def update_pair_to_words(vocab):
-        pair_to_words.clear()
-        for word in tqdm(vocab, desc="Updating pair-to-words mapping"):
-            symbols = word.split()
+    pair_to_indexes = collections.defaultdict(lambda: (set(), int))
+    pairs_freq = collections.defaultdict(int)
+
+    # Count pair frequency
+    def count_freq_in_token(token, pair):
+        freq_in_token = 0
+        for i in range(len(token) - 1):
+            if token[i] == pair[0] and token[i + 1] == pair[1]:
+                freq_in_token += 1
+        return freq_in_token
+
+    # Calculate frequencies for all pairs
+    def pair_freq_update_calc(pair_to_indexes, new_pairs):
+        #    print("Calculating pair frequencies...")
+        # pairs_freq = collections.defaultdict(int)
+        for pair in new_pairs:  # tqdm(pair_to_indexes.items(), desc="Calculating pair frequencies"):
+            indexes, frequency = pair_to_indexes[pair]
+            for idx in indexes:
+                token = tokens_list[idx].split()  # Split the token into symbols
+                pair_count = count_freq_in_token(token, pair)
+                pairs_freq[pair] += pair_count  # Accumulate the frequency
+
+        debug_print("Pair frequencies:", dict(pairs_freq))
+        return pairs_freq
+
+    # changes indexes is a list of all indexes of tokens that has changed.
+    def update_pair_to_indexes(tokens, changed_indexes=None):
+        if changed_indexes is None:
+            changed_indexes = range(len(tokens))
+
+        # Initialize the list to hold new pairs
+        list_of_new_pairs = []
+
+        # Use tqdm to display the progress for updating pair-to-index mappings
+        for idx in tqdm(changed_indexes, desc="Updating pair-to-indexes"):
+            word = tokens[idx]
+            symbols = word.split()  # Split token into characters or sub-tokens
             for i in range(len(symbols) - 1):
                 pair = (symbols[i], symbols[i + 1])
-                pair_to_words[pair].add(word)
+                if pair not in pair_to_indexes:
+                    pair_to_indexes[pair] = (set(), int)  # Initialize pair-to-index with empty set and frequency 0
+                    list_of_new_pairs.append(pair)
+                indexes, frequency = pair_to_indexes[pair]
+                indexes.add(idx)  # Correctly add the index to the set
+                pair_to_indexes[pair] = (indexes, frequency)  # Update the pair-to-index mapping
 
-    def get_stats():
-        pairs = collections.defaultdict(int)
-        for pair, words in tqdm(pair_to_words.items(), desc="Calculating pair frequencies"):
-            for word in words:
-                pairs[pair] += vocab[word]
-        return pairs
+        debug_print("changed indexes:", changed_indexes)
+        debug_print("pair_to_indexes:", dict(pair_to_indexes))
 
-    def merge_vocab(pair, v_in):
-        v_out = {}
+        return list_of_new_pairs
+
+    def merge_vocab(pair, tokens_list):
         bigram = re.escape(' '.join(pair))
-        p = re.compile(r'(?<!\S)' + bigram + r'(?!\S)')
-        for word in tqdm(v_in, desc=f"Merging pair {pair}"):
-            w_out = p.sub(''.join(pair), word)
-            v_out[w_out] = v_in[word]
-        return v_out
+        pattern = re.compile(r'(?<!\S)' + bigram + r'(?!\S)')
+        #   changed_tokens = []
+        changed_indexes = []
 
-    update_pair_to_words(vocab)
+        # Merge the pair in the tokens list
+        indexes_words, frequency = pair_to_indexes[pair]
+        for i_word in indexes_words:
+            word = tokens_list[i_word]
+            symbols = word.split()
+            merged_word = pattern.sub(''.join(pair), word)
+
+            # Update frequencies of adjacent pairs
+            for i in range(len(symbols) - 1):
+                if (symbols[i], symbols[i + 1]) == pair:
+                    if i > 0:  # Update left neighbor pair
+                        left_pair = (symbols[i - 1], symbols[i])
+                        pairs_freq[left_pair] = 0
+                    if i + 2 < len(symbols):  # Update right neighbor pair
+                        right_pair = (symbols[i+1], symbols[i + 2])
+                        pairs_freq[right_pair] = 0
+
+            tokens_list[i_word] = merged_word
+            pairs_freq[pair] = 0  # Mark this pair as merged
+            if merged_word != word:
+                changed_indexes.append(i_word)
+
+        return tokens_list, changed_indexes
+
+    new_pairs = update_pair_to_indexes(tokens_list)
+    debug_print("new pairs: ", new_pairs)
+    pairs_freq = pair_freq_update_calc(pair_to_indexes, new_pairs)
 
     # Perform BPE merges
     for i in tqdm(range(num_merges), desc="Performing BPE merges"):
-        pairs = get_stats()
-        if not pairs:
+        #        pairs = get_stats(pair_to_indexes)
+        if not pairs_freq:
             break
-        best = max(pairs, key=pairs.get)
-        vocab = merge_vocab(best, vocab)
-        update_pair_to_words(vocab)
-        print(f"Step {i + 1}: Merged pair {best}")
+        best = max(pairs_freq, key=pairs_freq.get)
+        vocab.add(''.join(best))
+        debug_print(f"Step {i + 1}: Merged pair {best} freq {pairs_freq[best]} ")
+        debug_print("vocab: ", vocab)
+        pairs_freq[best] = 0
+        tokens_list, changed_indexes = merge_vocab(best, tokens_list)
+        new_pairs = update_pair_to_indexes(tokens_list, changed_indexes)
 
-    return vocab
+    #    print("new pairs: ", new_pairs)
+
+        debug_print("token list :", tokens_list, "\n----------------------------------------------\n")
+
+        pairs = pair_freq_update_calc(pair_to_indexes, new_pairs)
+
+    # sort vocab by a-b
+    sorted_vocab = sorted(vocab)
+
+    return sorted_vocab
 
 
 if __name__ == "__main__":
     filename = "hebrew.txt.gz"
     N = 30000
-    train_bpe(filename, N)
+    # Start the timer
+ #   start_time = time.time()
 
-# def train_bpe(filename, N):
-#     # Read and preprocess the file
-#     with gzip.open(filename, 'rt', encoding='utf-8') as file:
-#         lines = file.read().splitlines()
-#
-#     # Pre-tokenization: split into characters and add end-of-word marker as its own token
-#     word_list = [' '.join(list(word) + ['§']) for line in tqdm(lines, desc="Reading and tokenizing lines")
-#                  for word in line.split()]
-#     vocab = collections.Counter(word_list)
-#
-#     pair_to_wordsindexes = collections.defaultdict(set)
-#
-#     def update_pair_to_wordindexes(vocab, word_list):
-#         """Update pair-to-word indexes mapping."""
-#         pair_to_wordsindexes.clear()
-#         for idx, word in enumerate(word_list):
-#             symbols = word.split()
-#             for i in range(len(symbols) - 1):
-#                 pair = (symbols[i], symbols[i + 1])
-#                 pair_to_wordsindexes[pair].add(idx)
-#
-#     def get_stats():
-#         """Calculate frequency of pairs in the vocabulary."""
-#         pairs = collections.defaultdict(int)
-#         for pair, indexes in pair_to_wordsindexes.items():
-#             for idx in indexes:
-#                 pairs[pair] += vocab[word_list[idx]]
-#         return pairs
-#
-#     def merge_vocab(pair, v_in, word_list):
-#         """Merge the most frequent pair in the vocabulary."""
-#         v_out = {}
-#         bigram = re.escape(' '.join(pair))
-#         p = re.compile(r'(?<!\S)' + bigram + r'(?!\S)')
-#         for idx in pair_to_wordsindexes[pair]:
-#             word = word_list[idx]
-#             merged_word = p.sub(''.join(pair), word)  # Merge the pair
-#             word_list[idx] = merged_word  # Update the word list
-#             v_out[merged_word] = v_in[word]
-#         return v_out
-#
-#     update_pair_to_wordindexes(vocab, word_list)
-#
-#     # Perform BPE merges
-#     for i in tqdm(range(N), desc="Performing BPE merges"):
-#         pairs = get_stats()
-#         if not pairs:
-#             break
-#         best = max(pairs, key=pairs.get)
-#         vocab = merge_vocab(best, vocab, word_list)
-#         update_pair_to_wordindexes(vocab, word_list)
-#         print(f"Step {i + 1}: Merged pair {best}")
-#
-#     return vocab
-#
-#
-# if __name__ == "__main__":
-#     filename = "hebrew.txt.gz"
-#     N = 30000
-#     train_bpe(filename, N)
+    # Execute the function
+    vocab = train_bpe(filename, N)
 
-#
-# def train_bpe(filename, N):
-#     # Read and preprocess the file
-#     with gzip.open(filename, 'rt', encoding='utf-8') as file:
-#         lines = file.read().splitlines()
-#
-#         # Pre-tokenization: split into characters and add end-of-word marker as its own token
-#     vocab = collections.Counter(
-#         ' '.join(list(word) + ['§']) for line in tqdm(lines, desc="Reading and tokenizing lines")
-#         for word in line.split()
-#     )
-#
-#     pair_to_words = collections.defaultdict(set)
-#
-#     def update_pair_to_words(vocab):
-#         pair_to_words.clear()
-#         for word in vocab:
-#             symbols = word.split()
-#             for i in range(len(symbols) - 1):
-#                 pair = (symbols[i], symbols[i + 1])
-#                 pair_to_words[pair].add(word)
-#
-#     def get_stats():
-#         pairs = collections.defaultdict(int)
-#         for pair, words in pair_to_words.items():
-#             for word in words:
-#                 pairs[pair] += vocab[word]
-#         return pairs
-#
-#     def merge_vocab(pair, v_in):
-#         v_out = {}
-#         bigram = re.escape(' '.join(pair))
-#         p = re.compile(r'(?<!\S)' + bigram + r'(?!\S)')
-#         for word in pair_to_words[pair]:
-#             w_out = p.sub(''.join(pair), word)  # Merge the pair
-#             v_out[w_out] = v_in[word]
-#         return v_out
-#
-#     update_pair_to_words(vocab)
-#
-#     # Perform BPE merges
-#     for i in tqdm(range(N), desc="Performing BPE merges"):
-#         pairs = get_stats()
-#         if not pairs:
-#             break
-#         best = max(pairs, key=pairs.get)
-#         vocab = merge_vocab(best, vocab)
-#         update_pair_to_words(vocab)
-#         print(f"Step {i + 1}: Merged pair {best}")
-#
-#     return vocab
-#
-#
-# if __name__ == "__main__":
-#     filename = "hebrew.txt.gz"
-#     N = 30000
-#     train_bpe(filename, N)
+    # End the timer
+ #   end_time = time.time()
+
+    # Calculate elapsed time
+ #   elapsed_time = end_time - start_time
+  #  debug_print(f"Elapsed time: {elapsed_time:.6f} seconds")
+    # vocab = train_bpe(filename, N)
+
+    with open("vocab_english.txt", 'w', encoding='utf-8') as file:
+        # Write each vocabulary item on a new line
+        for word in vocab:
+            file.write(word + '\n')
+    print(f"Vocabulary written to {filename}")
+    print("Final Vocabulary Size:", len(vocab))
+ #   print("Sample Vocabulary:", list(vocab))

@@ -4,7 +4,7 @@ from tqdm import tqdm
 import gzip
 import time
 
-DEBUG = True  # Set to False to disable debug prints
+DEBUG = False  # Set to False to disable debug prints
 
 
 def debug_print(*args, **kwargs):
@@ -14,7 +14,7 @@ def debug_print(*args, **kwargs):
 
 def train_bpe(filename, num_merges):
     # Read and preprocess the file
-    with open(filename, 'rt', encoding='utf-8') as file:
+    with gzip.open(filename, 'rt', encoding='utf-8') as file:
         lines = file.read().splitlines()
 
     # Tokenize: characters separated by spaces, with '§' as end-of-word marker
@@ -110,7 +110,7 @@ def train_bpe(filename, num_merges):
         return tokens_list, changed_indexes
 
     new_pairs = update_pair_to_indexes(tokens_list)
-    print("new pairs: ", new_pairs)
+    debug_print("new pairs: ", new_pairs)
     pairs_freq = pair_freq_update_calc(pair_to_indexes, new_pairs)
 
     # Perform BPE merges
@@ -139,20 +139,26 @@ def train_bpe(filename, num_merges):
 
 
 if __name__ == "__main__":
-    filename = "test_video.txt"
-    N = 8
+    filename = "english.txt.gz"
+    N = 30000
     # Start the timer
-    start_time = time.time()
+ #   start_time = time.time()
 
     # Execute the function
     vocab = train_bpe(filename, N)
 
     # End the timer
-    end_time = time.time()
+ #   end_time = time.time()
 
     # Calculate elapsed time
-    elapsed_time = end_time - start_time
-    debug_print(f"Elapsed time: {elapsed_time:.6f} seconds")
+ #   elapsed_time = end_time - start_time
+  #  debug_print(f"Elapsed time: {elapsed_time:.6f} seconds")
     # vocab = train_bpe(filename, N)
     print("Final Vocabulary Size:", len(vocab))
     print("Sample Vocabulary:", list(vocab))
+    with open("vocab_english.txt", 'w', encoding='utf-8') as file:
+        # Write each vocabulary item on a new line
+        for word in vocab:
+            file.write(word + '\n')
+    print(f"Vocabulary written to {filename}")
+    print("Final Vocabulary Size:", len(vocab))
