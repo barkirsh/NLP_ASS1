@@ -33,20 +33,38 @@ def train_bpe(filename, num_merges):
     debug_print("init vocab size: ", len(vocab))
 
     pair_to_indexes = collections.defaultdict(lambda: (set(), 0))
+    pair_to_indexes_list = [lambda: (set(), 0)]
 
+    def init_pair_to_indexes():
+
+        for sym1 in vocab:
+            for sym2 in vocab:
+                pair_to_indexes[(sym1, sym2)] = (set(), 0)
+        #        new_pairs = set()
+        debug_print("changed indexes:", changed_indexes)
+        # Update pair-to-index mappings for the specified indices
+        for idx in range(len(tokens_list)):
+            word = tokens_list[idx]
+            symbols = word.split()
+
+            # Then, add the new pairs for the updated token
+            for i in range(len(symbols) - 1):
+                new_pair = (symbols[i], symbols[i + 1])
+                if new_pair not in pair_to_indexes:
+                    pair_to_indexes[new_pair] = (set(), 0)
+                indexes, freq = pair_to_indexes[new_pair]
+                indexes.add(idx)
+                pair_to_indexes[new_pair] = (indexes, freq + 1)
+        for pair in pair_to_indexes:
+            indexes, freq = pair_to_indexes[pair]
+            pair_to_indexes_list.append((pair, (indexes, freq)))
     # changes indexes is a list of all indexes of tokens that has changed.
-    def update_pair_to_indexes(tokens, changed_indexes=None, new_symbol=None):
-        if changed_indexes is None:
-            changed_indexes = range(len(tokens))  # Process all tokens initially
-            if new_symbol is None:
-                for sym1 in vocab:
-                    for sym2 in vocab:
-                        pair_to_indexes[(sym1, sym2)] = (set(), 0)
+    def update_pair_to_indexes( changed_indexes=None, new_symbol=None):
         #        new_pairs = set()
         debug_print("changed indexes:", changed_indexes)
         # Update pair-to-index mappings for the specified indices
         for idx in changed_indexes:
-            word = tokens[idx]
+            word = tokens_list[idx]
             symbols = word.split()
 
             # Then, add the new pairs for the updated token
