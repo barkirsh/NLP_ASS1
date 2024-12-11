@@ -4,7 +4,7 @@ import gzip
 import time
 from tqdm import tqdm
 
-DEBUG = False  # Set to False to disable debug prints
+DEBUG = True  # Set to False to disable debug prints
 
 
 def debug_print(*args, **kwargs):
@@ -14,7 +14,7 @@ def debug_print(*args, **kwargs):
 
 def train_bpe(filename, num_merges):
     # Read and preprocess the file
-    with gzip.open(filename, 'rt', encoding='utf-8') as file:
+    with open(filename, 'rt', encoding='utf-8') as file:
         lines = file.read().splitlines()
 
     # Tokenize: characters separated by spaces, with '§' as end-of-word marker
@@ -134,7 +134,7 @@ def train_bpe(filename, num_merges):
 
         debug_print("token list :", tokens_list, "\n----------------------------------------------\n")
 
-        pairs = pair_freq_update_calc(pair_to_indexes, new_pairs)
+        pairs_freq = pair_freq_update_calc(pair_to_indexes, new_pairs)
 
     # sort vocab by a-b
     sorted_vocab = sorted(vocab)
@@ -143,8 +143,8 @@ def train_bpe(filename, num_merges):
 
 
 if __name__ == "__main__":
-    filename = "english.txt.gz"
-    N = 30000
+    filename = "test_video.txt"
+    N = 8
     # Start the timer
  #   start_time = time.time()
 
